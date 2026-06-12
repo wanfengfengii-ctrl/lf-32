@@ -22,6 +22,7 @@ import {
   SignalTypeConfig,
   TransmissionDirection
 } from '../../models';
+import { AddLinkDialogComponent } from '../add-link-dialog/add-link-dialog.component';
 
 @Component({
   selector: 'app-station-config',
@@ -194,6 +195,7 @@ export class StationConfigComponent implements OnInit, OnDestroy {
 
   constructor(
     private readonly stateService: StateService,
+    private readonly dialog: MatDialog,
     private readonly snackBar: MatSnackBar
   ) {}
 
@@ -252,28 +254,19 @@ export class StationConfigComponent implements OnInit, OnDestroy {
   addLink(): void {
     if (this.stations.length < 2) return;
 
-    const existing = new Set(this.links.map(l => `${l.fromStationId}-${l.toStationId}`));
-    let fromId = this.stations[0].id;
-    let toId = this.stations[1].id;
-
-    for (let i = 0; i < this.stations.length; i++) {
-      for (let j = i + 1; j < this.stations.length; j++) {
-        const key1 = `${this.stations[i].id}-${this.stations[j].id}`;
-        const key2 = `${this.stations[j].id}-${this.stations[i].id}`;
-        if (!existing.has(key1) && !existing.has(key2)) {
-          fromId = this.stations[i].id;
-          toId = this.stations[j].id;
-          break;
-        }
+    const dialogRef = this.dialog.open(AddLinkDialogComponent, {
+      width: '400px',
+      data: {
+        stations: this.stations,
+        existingLinks: this.links
       }
-    }
+    });
 
-    this.stateService.addLink({
-      fromStationId: fromId,
-      toStationId: toId,
-      direction: TransmissionDirection.BIDIRECTIONAL,
-      signalTypes: [SignalType.DRUM, SignalType.LANTERN, SignalType.FLAG],
-      delayMs: 1000
+    dialogRef.afterClosed().subscribe(result => {
+      if (result) {
+        this.stateService.addLink(result);
+        this.snackBar.open('通视关系已添加', '确定', { duration: 2000 });
+      }
     });
   }
 

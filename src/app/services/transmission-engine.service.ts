@@ -4,7 +4,8 @@ import {
   Subject,
   Subscription,
   timer,
-  throwError
+  throwError,
+  interval
 } from 'rxjs';
 import {
   takeUntil
@@ -68,6 +69,10 @@ export class TransmissionEngineService {
   private currentSignalType: SignalType | null = null;
   private stationTransmissionTimestamps = new Map<string, Map<SignalType, number>>();
   private readonly CONFLICT_WINDOW_MS = 500;
+  private transmissionStartTime = 0;
+  private estimatedTotalTime = 0;
+  private stationMaxDelay = new Map<string, number>();
+  private progressTimer: Subscription | null = null;
 
   constructor(private readonly stateService: StateService) {}
 
@@ -143,8 +148,14 @@ export class TransmissionEngineService {
     this.currentSignalType = startSignalType;
     this.buildAdjacencyMap(links);
 
+    this.transmissionStartTime = Date.now();
+    this.stationMaxDelay.set(startStationId, 0);
+    this.estimatedTotalTime = this.estimateTotalTime(startStationId, links, stations);
+
     this.currentRecord = this.createTransmissionRecord(startStationId, startSignalType);
     this.stateService.setCurrentTransmission(this.currentRecord);
+    this.stateService.setTotalTime(this.estimatedTotalTime);
+    this.stateService.setCurrentTime(0);
     this.stateService.setPlaying();
 
     this.updateStationStatus(startStationId, StationStatus.TRANSMITTING, startSignalType);
@@ -165,6 +176,7 @@ export class TransmissionEngineService {
 
     this.enqueueNeighbors(startStationId, startSignalType);
     this.processQueue();
+    this.startProgressTimer();
 
     return this.transmissionEvent$.asObservable().pipe(
       takeUntil(this.stop$)
@@ -180,9 +192,11 @@ export class TransmissionEngineService {
     this.stateService.setPaused();
 
     const now = Date.now();
+    const speed = this.getPlaybackSpeed();
     for (const timerItem of this.pendingTimers) {
       const elapsed = now - timerItem.startTime;
-      timerItem.remainingMs = Math.max(0, timerItem.remainingMs - elapsed);
+      const elapsedOriginal = elapsed * speed;
+      timerItem.remainingMs = Math.max(0, timerItem.remainingMs - elapsedOriginal);
       timerItem.subscription.unsubscribe();
     }
   }
@@ -210,6 +224,7 @@ export class TransmissionEngineService {
   }
 
   stop(): void {
+    this.stopProgressTimer();
     this.stop$.next();
 
     for (const timerItem of this.pendingTimers) {
@@ -218,6 +233,10 @@ export class TransmissionEngineService {
 
     if (this.currentRecord) {
       this.currentRecord.endTime = Date.now();
+      const actualTotalTime = this.getCurrentTime();
+      if (actualTotalTime > 0) {
+        this.stateService.setTotalTime(actualTotalTime);
+      }
       this.stateService.addToTransmissionHistory({ ...this.currentRecord });
       this.stateService.setCurrentTransmission(null);
     }
@@ -258,7 +277,34 @@ export class TransmissionEngineService {
   }
 
   setSpeed(speed: PlaybackSpeed): void {
+    const oldSpeed = this.getPlaybackSpeed();
+    if (oldSpeed === speed) {
+      this.stateService.setSpeed(speed);
+      return;
+    }
     this.stateService.setSpeed(speed);
+
+    if (!this.currentRecord || this.isPaused) {
+      return;
+    }
+
+    const now = Date.now();
+    for (const timerItem of this.pendingTimers) {
+      const elapsed = now - timerItem.startTime;
+      const elapsedOriginal = elapsed * oldSpeed;
+      timerItem.remainingMs = Math.max(0, timerItem.remainingMs - elapsedOriginal);
+      timerItem.subscription.unsubscribe();
+
+      const actualDelay = timerItem.remainingMs / speed;
+      timerItem.startTime = Date.now();
+      timerItem.subscription = timer(actualDelay).subscribe(() => {
+        this.removePendingTimer(timerItem);
+        if (!this.isPaused) {
+          this.processQueueItem(timerItem.queueItem);
+          this.processQueue();
+        }
+      });
+    }
   }
 
   interruptStation(stationId: string, reason: string): void {
@@ -457,6 +503,62 @@ export class TransmissionEngineService {
     }
   }
 
+  private estimateTotalTime(startStationId: string, links: VisibilityLink[], stations: PostStation[]): number {
+    const tempAdjMap = new Map<string, { toId: string; delay: number; signalTypes: SignalType[] }[]>();
+
+    for (const link of links) {
+      if (link.direction === TransmissionDirection.FORWARD ||
+          link.direction === TransmissionDirection.BIDIRECTIONAL) {
+        if (!tempAdjMap.has(link.fromStationId)) {
+          tempAdjMap.set(link.fromStationId, []);
+        }
+        tempAdjMap.get(link.fromStationId)!.push({
+          toId: link.toStationId,
+          delay: link.delayMs,
+          signalTypes: link.signalTypes
+        });
+      }
+
+      if (link.direction === TransmissionDirection.BACKWARD ||
+          link.direction === TransmissionDirection.BIDIRECTIONAL) {
+        if (!tempAdjMap.has(link.toStationId)) {
+          tempAdjMap.set(link.toStationId, []);
+        }
+        tempAdjMap.get(link.toStationId)!.push({
+          toId: link.fromStationId,
+          delay: link.delayMs,
+          signalTypes: link.signalTypes
+        });
+      }
+    }
+
+    const maxDelay = new Map<string, number>();
+    maxDelay.set(startStationId, 0);
+    const visited = new Set<string>([startStationId]);
+    const queue: string[] = [startStationId];
+
+    while (queue.length > 0) {
+      const current = queue.shift()!;
+      const currentDelay = maxDelay.get(current) ?? 0;
+      const neighbors = tempAdjMap.get(current);
+      if (!neighbors) continue;
+
+      for (const { toId, delay } of neighbors) {
+        if (!visited.has(toId)) {
+          visited.add(toId);
+          maxDelay.set(toId, currentDelay + delay);
+          queue.push(toId);
+        }
+      }
+    }
+
+    let total = 0;
+    for (const d of maxDelay.values()) {
+      if (d > total) total = d;
+    }
+    return total || 1000;
+  }
+
   private buildAdjacencyMap(links: VisibilityLink[]): void {
     this.adjacencyMap.clear();
 
@@ -546,6 +648,8 @@ export class TransmissionEngineService {
     const neighbors = this.adjacencyMap.get(stationId);
     if (!neighbors) return;
 
+    const fromDelay = this.stationMaxDelay.get(stationId) ?? 0;
+
     for (const { toId, link } of neighbors) {
       if (this.visitedStations.has(toId)) continue;
 
@@ -553,6 +657,16 @@ export class TransmissionEngineService {
       if (toStation?.interrupted) continue;
 
       if (!link.signalTypes.includes(signalType)) continue;
+
+      const toDelay = fromDelay + link.delayMs;
+      const existingToDelay = this.stationMaxDelay.get(toId) ?? 0;
+      if (toDelay > existingToDelay) {
+        this.stationMaxDelay.set(toId, toDelay);
+      }
+      if (toDelay > this.estimatedTotalTime) {
+        this.estimatedTotalTime = toDelay;
+        this.stateService.setTotalTime(toDelay);
+      }
 
       this.bfsQueue.push({
         fromId: stationId,
@@ -690,5 +804,47 @@ export class TransmissionEngineService {
       t.subscription.unsubscribe();
       this.removePendingTimer(t);
     }
+  }
+
+  private startProgressTimer(): void {
+    this.stopProgressTimer();
+
+    const updateInterval = 50;
+    this.progressTimer = interval(updateInterval).pipe(
+      takeUntil(this.stop$)
+    ).subscribe(() => {
+      if (this.isPaused || !this.currentRecord) {
+        return;
+      }
+
+      const speed = this.getPlaybackSpeed();
+      const currentTime = this.getCurrentTime();
+      const newTime = currentTime + updateInterval * speed;
+
+      const maxTime = this.computeActualMaxTime();
+      this.stateService.setCurrentTime(Math.min(newTime, maxTime));
+    });
+  }
+
+  private stopProgressTimer(): void {
+    if (this.progressTimer) {
+      this.progressTimer.unsubscribe();
+      this.progressTimer = null;
+    }
+  }
+
+  private computeActualMaxTime(): number {
+    let maxTime = this.estimatedTotalTime;
+    for (const timerItem of this.pendingTimers) {
+      const speed = this.getPlaybackSpeed();
+      const elapsed = Date.now() - timerItem.startTime;
+      const elapsedOriginal = elapsed * speed;
+      const remainingOriginal = Math.max(0, timerItem.remainingMs - elapsedOriginal);
+      const projectedTime = this.getCurrentTime() + remainingOriginal;
+      if (projectedTime > maxTime) {
+        maxTime = projectedTime;
+      }
+    }
+    return maxTime;
   }
 }
