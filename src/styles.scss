@@ -1,0 +1,124 @@
+@use '@angular/material' as mat;
+
+@include mat.core();
+
+$my-primary: mat.define-palette(mat.$indigo-palette);
+$my-accent: mat.define-palette(mat.$amber-palette, A200, A100, A400);
+$my-warn: mat.define-palette(mat.$red-palette);
+
+$my-theme: mat.define-dark-theme((
+  color: (
+    primary: $my-primary,
+    accent: $my-accent,
+    warn: $my-warn,
+  )
+));
+
+@include mat.all-component-themes($my-theme);
+
+html, body {
+  height: 100%;
+  margin: 0;
+  font-family: "Noto Sans SC", "Roboto", "Helvetica Neue", sans-serif;
+  background: #0f0f1a;
+  color: #e0d5c1;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #1a1a2e;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #3a3a5c;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #5a5a8c;
+}
+
+.mat-mdc-card {
+  background: #1e1e30 !important;
+  color: #e0d5c1 !important;
+}
+
+.mat-mdc-card-title {
+  color: #c9b896 !important;
+  font-size: 15px !important;
+}
+
+.mat-mdc-list-item {
+  color: #e0d5c1 !important;
+}
+
+.mat-mdc-form-field {
+  .mdc-text-field--outlined {
+    .mdc-notched-outline__leading,
+    .mdc-notched-outline__trailing,
+    .mdc-notched-outline__notch {
+      border-color: #3a3a5c !important;
+    }
+  }
+  .mdc-text-field--outlined .mdc-floating-label,
+  .mdc-text-field--outlined .mdc-floating-label--float-above {
+    color: #8a8aaa !important;
+  }
+}
+
+.mat-mdc-select-value {
+  color: #e0d5c1 !important;
+}
+
+.mat-mdc-option {
+  color: #e0d5c1 !important;
+  background: #1e1e30 !important;
+}
+
+.mat-mdc-option:hover {
+  background: #2a2a4a !important;
+}
+
+.mat-mdc-option.mat-mdc-option-active {
+  background: #3a3a5c !important;
+}
+
+.mat-mdc-button-toggle-group {
+  background: #1a1a2e !important;
+}
+
+.mat-mdc-button-toggle {
+  color: #8a8aaa !important;
+  background: #1a1a2e !important;
+}
+
+.mat-mdc-button-toggle.mat-mdc-button-toggle-checked {
+  color: #f1c40f !important;
+  background: #2a2a4a !important;
+}
+
+.mat-mdc-checkbox {
+  .mdc-checkbox__background {
+    border-color: #5a5a8c !important;
+  }
+}
+
+.mat-mdc-progress-bar {
+  .mdc-linear-progress__bar-inner {
+    border-color: #f1c40f !important;
+  }
+}
+
+.mat-mdc-snack-bar-container {
+  background: #2a2a4a !important;
+  color: #e0d5c1 !important;
+}
+
+.cdk-overlay-pane {
+  .mat-mdc-select-panel {
+    background: #1e1e30 !important;
+  }
+}
